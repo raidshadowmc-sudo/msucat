@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: msucat
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            bin: msucat
+            archive: tar.gz
+            cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: msucat.exe
+            archive: zip
+          - os: macos-13
+            target: x86_64-apple-darwin
+            bin: msucat
+            archive: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            bin: msucat
+            archive: tar.gz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install ARM64 cross-linker
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build release binary
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Run Binary Security Gate (binfence)
+        uses: raidshadowmc-sudo/binfence@v0.1.3
+        with:
+          binary: target/${{ matrix.target }}/release/${{ matrix.bin }}
+          fail-on-degraded: true
+          require-aslr: true
+          require-dep: true
+          fail-on-rwx: true
+
+      - name: Package artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $TAG = "${{ github.ref_name }}"
+          $STAGING = "staging"
+          New-Item -ItemType Directory -Path $STAGING
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" -Destination $STAGING/
+          if (Test-Path "README.md") { Copy-Item "README.md" -Destination $STAGING/ }
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $STAGING/ }
+
+          $ARCHIVE_CANONICAL = "msucat-${{ matrix.target }}.zip"
+          $ARCHIVE_VERSIONED = "msucat-$TAG-${{ matrix.target }}.zip"
+          Compress-Archive -Path "$STAGING/*" -DestinationPath $ARCHIVE_CANONICAL
+          Copy-Item $ARCHIVE_CANONICAL $ARCHIVE_VERSIONED
+
+          $HASH = (Get-FileHash -Algorithm SHA256 $ARCHIVE_CANONICAL).Hash.ToLower()
+          [System.IO.File]::WriteAllText("$PWD/$ARCHIVE_CANONICAL.sha256", "$HASH  $ARCHIVE_CANONICAL`n", [System.Text.UTF8Encoding]::new($false))
+
+      - name: Package artifacts (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          TAG="${{ github.ref_name }}"
+          STAGING="staging"
+          mkdir -p "$STAGING"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$STAGING/"
+          [ -f "README.md" ] && cp "README.md" "$STAGING/"
+          [ -f "LICENSE" ] && cp "LICENSE" "$STAGING/"
+
+          ARCHIVE_CANONICAL="msucat-${{ matrix.target }}.tar.gz"
+          ARCHIVE_VERSIONED="msucat-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE_CANONICAL" -C "$STAGING" .
+          cp "$ARCHIVE_CANONICAL" "$ARCHIVE_VERSIONED"
+
+          if command -v sha256sum &> /dev/null; then
+            sha256sum "$ARCHIVE_CANONICAL" > "${ARCHIVE_CANONICAL}.sha256"
+          elif command -v shasum &> /dev/null; then
+            shasum -a 256 "$ARCHIVE_CANONICAL" > "${ARCHIVE_CANONICAL}.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            msucat-${{ matrix.target }}.*
+            msucat-${{ github.ref_name }}-${{ matrix.target }}.*
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate Unified SHA256SUMS.txt
+        run: |
+          cd artifacts
+          cat *.sha256 | tr -d '\r' | sort -u > SHA256SUMS.txt
+          rm -f *.sha256
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
