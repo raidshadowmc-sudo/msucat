@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use msucat::{parse_catalog_date, DownloadFile, MsuCatError, MsuClient, Result, UpdateDetails, UpdateSummary};
+use msucat::{
+    DownloadFile, MsuCatError, MsuClient, Result, UpdateDetails, UpdateSummary, parse_catalog_date,
+};
 use std::path::PathBuf;
 
 fn is_guid(s: &str) -> bool {

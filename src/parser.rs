@@ -409,6 +409,46 @@ pub fn parse_download_dialog(html: &str) -> Result<Vec<DownloadFile>> {
     Ok(files_result)
 }
 
+/// Parse catalog date string (e.g. "9/12/2023", "2023-09-12", "12.09.2023") into (year, month, day).
+pub fn parse_catalog_date(s: &str) -> (u32, u32, u32) {
+    let s = s.trim();
+    if s.is_empty() {
+        return (0, 0, 0);
+    }
+    let parts: Vec<&str> = if s.contains('/') {
+        s.split('/').collect()
+    } else if s.contains('-') {
+        s.split('-').collect()
+    } else if s.contains('.') {
+        s.split('.').collect()
+    } else {
+        return (0, 0, 0);
+    };
+
+    if parts.len() != 3 {
+        return (0, 0, 0);
+    }
+
+    let p0 = parts[0].parse::<u32>().unwrap_or(0);
+    let p1 = parts[1].parse::<u32>().unwrap_or(0);
+    let p2 = parts[2].parse::<u32>().unwrap_or(0);
+
+    // If first part is 4-digit year (YYYY/MM/DD)
+    if p0 >= 1990 {
+        (p0, p1, p2)
+    } else if p2 >= 1990 {
+        if s.contains('.') || p0 > 12 {
+            // DD.MM.YYYY format
+            (p2, p1, p0)
+        } else {
+            // MM/DD/YYYY format
+            (p2, p0, p1)
+        }
+    } else {
+        (p2, p0, p1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,45 +536,5 @@ mod tests {
         assert_eq!(parse_catalog_date("2022-01-15"), (2022, 1, 15));
         assert_eq!(parse_catalog_date("26.01.2018"), (2018, 1, 26));
         assert_eq!(parse_catalog_date("invalid"), (0, 0, 0));
-    }
-}
-
-/// Parse catalog date string (e.g. "9/12/2023", "2023-09-12", "12.09.2023") into (year, month, day).
-pub fn parse_catalog_date(s: &str) -> (u32, u32, u32) {
-    let s = s.trim();
-    if s.is_empty() {
-        return (0, 0, 0);
-    }
-    let parts: Vec<&str> = if s.contains('/') {
-        s.split('/').collect()
-    } else if s.contains('-') {
-        s.split('-').collect()
-    } else if s.contains('.') {
-        s.split('.').collect()
-    } else {
-        return (0, 0, 0);
-    };
-
-    if parts.len() != 3 {
-        return (0, 0, 0);
-    }
-
-    let p0 = parts[0].parse::<u32>().unwrap_or(0);
-    let p1 = parts[1].parse::<u32>().unwrap_or(0);
-    let p2 = parts[2].parse::<u32>().unwrap_or(0);
-
-    // If first part is 4-digit year (YYYY/MM/DD)
-    if p0 >= 1990 {
-        (p0, p1, p2)
-    } else if p2 >= 1990 {
-        if s.contains('.') || p0 > 12 {
-            // DD.MM.YYYY format
-            (p2, p1, p0)
-        } else {
-            // MM/DD/YYYY format
-            (p2, p0, p1)
-        }
-    } else {
-        (p2, p0, p1)
     }
 }
