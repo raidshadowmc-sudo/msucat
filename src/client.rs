@@ -44,8 +44,7 @@ impl MsuClient {
         }
     }
 
-    /// Search the catalog for updates matching `query`.
-    /// Automatically handles pagination up to `max_pages` (if None, returns first page).
+    /// Search the catalog for updates matching `query` (fetches first page of 25 results).
     pub async fn search(&self, query: &str) -> Result<Vec<UpdateSummary>> {
         self.search_with_limit(query, 1).await
     }

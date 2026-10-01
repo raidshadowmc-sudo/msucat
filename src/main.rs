@@ -291,6 +291,11 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                             "✓".green().bold(),
                             hash.dimmed()
                         );
+                    } else {
+                        println!(
+                            "   {} Warning: no catalog hash available, skipping verification",
+                            "!".yellow().bold()
+                        );
                     }
                 } else {
                     println!(
