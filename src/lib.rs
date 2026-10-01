@@ -22,3 +22,4 @@ pub mod parser;
 pub use client::MsuClient;
 pub use error::{MsuCatError, Result};
 pub use models::{DownloadFile, UpdateDetails, UpdateSummary};
+pub use parser::parse_catalog_date;

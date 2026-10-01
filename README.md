@@ -23,6 +23,18 @@ The official Microsoft Update Catalog website relies on legacy ASP.NET WebForms,
 
 ## Installation
 
+### Prebuilt Binaries (Linux, macOS, Windows)
+
+Standalone pre-compiled binaries are published for every release on [GitHub Releases](https://github.com/raidshadowmc-sudo/msucat/releases/latest):
+
+| Target Platform | Architecture | Binary Package |
+|---|---|---|
+| **Linux** | `x86_64` (glibc 2.17+) | [`msucat-*-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/raidshadowmc-sudo/msucat/releases/latest) |
+| **Linux** | `aarch64` (ARM64) | [`msucat-*-aarch64-unknown-linux-gnu.tar.gz`](https://github.com/raidshadowmc-sudo/msucat/releases/latest) |
+| **Windows** | `x86_64` (MSVC) | [`msucat-*-x86_64-pc-windows-msvc.zip`](https://github.com/raidshadowmc-sudo/msucat/releases/latest) |
+| **macOS** | Apple Silicon (`aarch64`) | [`msucat-*-aarch64-apple-darwin.tar.gz`](https://github.com/raidshadowmc-sudo/msucat/releases/latest) |
+| **macOS** | Intel (`x86_64`) | [`msucat-*-x86_64-apple-darwin.tar.gz`](https://github.com/raidshadowmc-sudo/msucat/releases/latest) |
+
 ### From Crates.io
 ```bash
 cargo install msucat --locked
@@ -39,7 +51,24 @@ cargo install --path .
 
 ## CLI Usage
 
-### 1. Search for Updates
+### 🚀 1. The One-Shot Downloader (`get`)
+Search, filter, resolve CDN links, stream download, and verify official SHA-256 hashes in a single command — no browser, no manual copying of GUIDs:
+
+```bash
+# Download a specific KB directly
+msucat get KB5034441
+
+# Download latest security rollup for Windows Server 2022
+msucat get "Windows Server 2022" --arch x64 --class security --latest
+
+# Inspect direct CDN URLs and official SHA-256 hashes without downloading
+msucat get KB4078130 --dry-run
+
+# Output structured JSON for automation pipelines (Ansible, CI/CD, Packer)
+msucat get KB4078130 --dry-run --json
+```
+
+### 2. Search for Updates
 Search by KB number, title, or keywords:
 ```bash
 # Search by KB number (returns first page of results)
@@ -57,7 +86,7 @@ msucat search "Windows Server 2022" --pages 2 --json
 
 > **Note on Filtering**: `--arch`, `--product`, and `--classification` are client-side filters applied to the fetched results. To filter server-side on Microsoft's index, include keywords directly in your search query (e.g. `msucat search "KB5044284 x64"`).
 
-### 2. View Update Metadata & Supersedence
+### 3. View Update Metadata & Supersedence
 Inspect detailed information, including replacement/superseded updates, MSRC severity, and support links:
 ```bash
 msucat info 20ff3247-bd92-4683-9094-c298e9c6125f
@@ -80,7 +109,7 @@ Example output:
 ══════════════════════════════════════════════════════════════════════
 ```
 
-### 3. Extract Direct Download Links & Checksums
+### 4. Extract Direct Download Links & Checksums
 Get direct download links along with verified SHA-256 and SHA-1 hashes without downloading:
 ```bash
 msucat links 20ff3247-bd92-4683-9094-c298e9c6125f
@@ -94,7 +123,7 @@ Output:
    SHA-1: b86f0bf2dc0866a0e117ed2d4a5302fab0493a7b
 ```
 
-### 4. Download Updates with Automatic Integrity Verification
+### 5. Download Updates by GUID with Automatic Integrity Verification
 Download `.msu` / `.cab` / `.exe` files with a progress bar and automatic SHA-256 verification:
 ```bash
 # Download to default directory (./downloads) with SHA-256 verification
@@ -116,7 +145,7 @@ Downloads stream into a temporary `.part` file (`<filename>.part`). Upon complet
 Add `msucat` to your `Cargo.toml`:
 ```toml
 [dependencies]
-msucat = "0.1.1"
+msucat = "0.1.2"
 ```
 
 ### Example: Search and Download

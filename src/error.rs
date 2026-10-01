@@ -26,6 +26,9 @@ pub enum MsuCatError {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("{0}")]
+    Generic(String),
 }
 
 pub type Result<T> = std::result::Result<T, MsuCatError>;
