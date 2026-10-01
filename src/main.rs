@@ -22,6 +22,122 @@ fn is_guid(s: &str) -> bool {
     }
 }
 
+fn matches_arch(text: &str, arch_query: &str) -> bool {
+    let t = text.to_lowercase();
+    let q = arch_query.to_lowercase();
+    match q.as_str() {
+        "x64" | "amd64" | "x86_64" => {
+            t.contains("x64") || t.contains("amd64") || t.contains("x86_64") || t.contains("64-bit")
+        }
+        "arm64" | "aarch64" => t.contains("arm64") || t.contains("aarch64"),
+        "x86" | "i386" | "i686" | "32-bit" | "32bit" => {
+            if t.contains("x86_64") || t.contains("x64") || t.contains("amd64") {
+                false
+            } else {
+                t.contains("x86")
+                    || t.contains("i386")
+                    || t.contains("32-bit")
+                    || t.contains("32bit")
+            }
+        }
+        _ => t.contains(&q),
+    }
+}
+
+fn extract_kb_number(title: &str) -> Option<String> {
+    let t = title.to_lowercase();
+    if let Some(pos) = t.find("kb") {
+        let after = &t[pos..];
+        let digits: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect();
+        if digits.len() >= 4 {
+            return Some(digits);
+        }
+    }
+    None
+}
+
+async fn resolve_latest<'a>(
+    client: &MsuClient,
+    candidates: &'a [UpdateSummary],
+) -> Result<&'a UpdateSummary> {
+    if candidates.is_empty() {
+        return Err(MsuCatError::NotFound(
+            "No candidate updates to resolve".to_string(),
+        ));
+    }
+    if candidates.len() == 1 {
+        return Ok(&candidates[0]);
+    }
+
+    // Inspect top candidates (up to 8) to check supersedence
+    let check_count = candidates.len().min(8);
+    let top_candidates = &candidates[..check_count];
+
+    let mut tasks = Vec::new();
+    for c in top_candidates {
+        let client_ref = client;
+        let id = c.id.clone();
+        tasks.push(async move { client_ref.get_details(&id).await.ok() });
+    }
+    let all_details = futures_util::future::join_all(tasks).await;
+
+    let mut is_superseded = vec![false; check_count];
+
+    for i in 0..check_count {
+        for j in 0..check_count {
+            if i == j {
+                continue;
+            }
+            let c_i = &top_candidates[i];
+            let c_j = &top_candidates[j];
+
+            let kb_i = extract_kb_number(&c_i.title);
+            let kb_j = extract_kb_number(&c_j.title);
+
+            // Check if details of candidate i states it is superseded by candidate j
+            if let Some(ref d_i) = all_details[i] {
+                for s in &d_i.superseded_by {
+                    let s_lower = s.to_lowercase();
+                    if s_lower.contains(&c_j.title.to_lowercase())
+                        || (kb_j.is_some() && s_lower.contains(kb_j.as_ref().unwrap()))
+                    {
+                        is_superseded[i] = true;
+                        break;
+                    }
+                }
+            }
+
+            // Check if details of candidate j states it supersedes candidate i
+            if !is_superseded[i] {
+                if let Some(ref d_j) = all_details[j] {
+                    for s in &d_j.supersedes {
+                        let s_lower = s.to_lowercase();
+                        if s_lower.contains(&c_i.title.to_lowercase())
+                            || (kb_i.is_some() && s_lower.contains(kb_i.as_ref().unwrap()))
+                        {
+                            is_superseded[i] = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Return the first un-superseded candidate (which is the newest by date among un-superseded)
+    for (idx, superseded) in is_superseded.iter().enumerate() {
+        if !*superseded {
+            return Ok(&top_candidates[idx]);
+        }
+    }
+
+    // Fallback: newest date candidate
+    Ok(&candidates[0])
+}
+
 #[derive(Parser)]
 #[command(
     name = "msucat",
@@ -197,10 +313,8 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                 let mut results = client.search_with_limit(&query, pages).await?;
 
                 if let Some(ref a) = arch {
-                    let a_lower = a.to_lowercase();
                     results.retain(|item| {
-                        item.title.to_lowercase().contains(&a_lower)
-                            || item.products.to_lowercase().contains(&a_lower)
+                        matches_arch(&item.title, a) || matches_arch(&item.products, a)
                     });
                 }
 
@@ -228,7 +342,10 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                     parse_catalog_date(&b.last_updated).cmp(&parse_catalog_date(&a.last_updated))
                 });
 
-                if latest || results.len() == 1 {
+                if latest {
+                    let resolved = resolve_latest(client, &results).await?;
+                    selected = resolved.clone();
+                } else if results.len() == 1 {
                     selected = results.remove(0);
                 } else {
                     eprintln!(
@@ -270,23 +387,53 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                 )));
             }
 
-            if json {
-                #[derive(serde::Serialize)]
-                struct GetJsonResponse<'a> {
-                    update: &'a UpdateSummary,
-                    files: &'a [DownloadFile],
+            if dry_run {
+                if json {
+                    #[derive(serde::Serialize)]
+                    struct GetDryRunJsonResponse<'a> {
+                        status: &'static str,
+                        update: &'a UpdateSummary,
+                        files: &'a [DownloadFile],
+                    }
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&GetDryRunJsonResponse {
+                            status: "dry_run",
+                            update: &selected,
+                            files: &files,
+                        })?
+                    );
+                } else {
+                    println!("{} Selected update:", "msucat:".cyan().bold());
+                    println!("   {} {}", "Title:".dimmed(), selected.title.bold());
+                    println!("   {} {}", "ID   :".dimmed(), selected.id.cyan());
+                    if !selected.last_updated.is_empty() || !selected.size.is_empty() {
+                        println!(
+                            "   {} {} | {} {}",
+                            "Date :".dimmed(),
+                            selected.last_updated.yellow(),
+                            "Size :".dimmed(),
+                            selected.size.yellow()
+                        );
+                    }
+                    println!();
+
+                    println!(
+                        "{} Resolved files (dry-run, no downloads performed):",
+                        "msucat:".yellow().bold()
+                    );
+                    for file in &files {
+                        println!(" - {}", file.file_name.bold());
+                        println!("   {} {}", "URL   :".dimmed(), file.url.cyan());
+                        if let Some(ref h) = file.sha256_hex {
+                            println!("   {} {}", "SHA256:".dimmed(), h);
+                        }
+                    }
                 }
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&GetJsonResponse {
-                        update: &selected,
-                        files: &files,
-                    })?
-                );
-                if dry_run {
-                    return Ok(());
-                }
-            } else {
+                return Ok(());
+            }
+
+            if !json {
                 println!("{} Selected update:", "msucat:".cyan().bold());
                 println!("   {} {}", "Title:".dimmed(), selected.title.bold());
                 println!("   {} {}", "ID   :".dimmed(), selected.id.cyan());
@@ -301,25 +448,6 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                 }
                 println!();
 
-                if dry_run {
-                    println!(
-                        "{} Resolved files (dry-run, no downloads performed):",
-                        "msucat:".yellow().bold()
-                    );
-                    for file in &files {
-                        println!(" - {}", file.file_name.bold());
-                        println!("   {} {}", "URL   :".dimmed(), file.url.cyan());
-                        if let Some(ref h) = file.sha256_hex {
-                            println!("   {} {}", "SHA256:".dimmed(), h);
-                        }
-                    }
-                    return Ok(());
-                }
-            }
-
-            // Perform downloads
-            tokio::fs::create_dir_all(&output).await?;
-            if !json {
                 println!(
                     "{} Downloading {} file(s) to {}\n",
                     "msucat:".cyan().bold(),
@@ -327,6 +455,10 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                     output.display().to_string().bold()
                 );
             }
+
+            // Perform downloads
+            tokio::fs::create_dir_all(&output).await?;
+            let mut downloaded_files = Vec::new();
 
             for file in &files {
                 let dest = output.join(&file.file_name);
@@ -365,6 +497,8 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                     })
                     .await?;
 
+                downloaded_files.push(downloaded_path.clone());
+
                 if let Some(p) = pb {
                     p.finish_with_message("Done");
                     println!(
@@ -395,7 +529,24 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                 }
             }
 
-            if !json {
+            if json {
+                #[derive(serde::Serialize)]
+                struct GetSuccessJsonResponse<'a> {
+                    status: &'static str,
+                    update: &'a UpdateSummary,
+                    files: &'a [DownloadFile],
+                    downloaded_files: &'a [PathBuf],
+                }
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&GetSuccessJsonResponse {
+                        status: "success",
+                        update: &selected,
+                        files: &files,
+                        downloaded_files: &downloaded_files,
+                    })?
+                );
+            } else {
                 println!(
                     "{} All downloads completed successfully!",
                     "msucat:".green().bold()
@@ -415,11 +566,8 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
 
             // Apply optional client-side filters
             if let Some(ref a) = arch {
-                let a_lower = a.to_lowercase();
-                results.retain(|item| {
-                    item.title.to_lowercase().contains(&a_lower)
-                        || item.products.to_lowercase().contains(&a_lower)
-                });
+                results
+                    .retain(|item| matches_arch(&item.title, a) || matches_arch(&item.products, a));
             }
 
             if let Some(ref p) = product {
@@ -714,4 +862,62 @@ fn print_update_details(details: &UpdateDetails) {
         }
     }
     println!("══════════════════════════════════════════════════════════════════════");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_matches_arch_aliases() {
+        // x64 aliases
+        assert!(matches_arch(
+            "Update for Windows Server 2012 for x64-based Systems (KB5020009)",
+            "x64"
+        ));
+        assert!(matches_arch(
+            "Update for Windows Server 2012 for x64-based Systems (KB5020009)",
+            "amd64"
+        ));
+        assert!(matches_arch(
+            "Update for Windows Server 2012 for x64-based Systems (KB5020009)",
+            "x86_64"
+        ));
+        assert!(matches_arch("Windows 10 AMD64 Architecture Update", "x64"));
+
+        // arm64 aliases
+        assert!(matches_arch("Windows 11 for ARM64-based Systems", "arm64"));
+        assert!(matches_arch(
+            "Windows 11 for ARM64-based Systems",
+            "aarch64"
+        ));
+        assert!(!matches_arch("Windows 11 for ARM64-based Systems", "x64"));
+
+        // x86 aliases
+        assert!(matches_arch(
+            "Update for Windows 7 for x86-based Systems",
+            "x86"
+        ));
+        assert!(matches_arch(
+            "Update for Windows 7 for x86-based Systems",
+            "i386"
+        ));
+        assert!(matches_arch(
+            "Update for Windows 7 for 32-bit Systems",
+            "x86"
+        ));
+        // x86 query should not match x86_64
+        assert!(!matches_arch("Update for x86_64 systems", "x86"));
+    }
+
+    #[test]
+    fn test_extract_kb_number() {
+        assert_eq!(
+            extract_kb_number(
+                "2022-11 Security Monthly Quality Rollup for Windows Server 2012 for x64-based Systems (KB5020009)"
+            ),
+            Some("kb5020009".to_string())
+        );
+        assert_eq!(extract_kb_number("Windows Update without KB"), None);
+    }
 }
