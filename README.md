@@ -42,15 +42,20 @@ cargo install --path .
 ### 1. Search for Updates
 Search by KB number, title, or keywords:
 ```bash
-# Search by KB number
+# Search by KB number (returns first page of results)
 msucat search KB5034441
 
-# Search with filters
+# Fetch multiple pages (25 items per page)
+msucat search "Windows 11" --pages 2
+
+# Search with client-side post-filters
 msucat search "Windows 11" --arch x64 --classification "Security Updates"
 
 # Retrieve machine-readable JSON
 msucat search "Windows Server 2022" --pages 2 --json
 ```
+
+> **Note on Filtering**: `--arch`, `--product`, and `--classification` are client-side filters applied to the fetched results. To filter server-side on Microsoft's index, include keywords directly in your search query (e.g. `msucat search "KB5044284 x64"`).
 
 ### 2. View Update Metadata & Supersedence
 Inspect detailed information, including replacement/superseded updates, MSRC severity, and support links:
@@ -92,12 +97,17 @@ Output:
 ### 4. Download Updates with Automatic Integrity Verification
 Download `.msu` / `.cab` / `.exe` files with a progress bar and automatic SHA-256 verification:
 ```bash
-# Download to default directory (./downloads)
+# Download to default directory (./downloads) with SHA-256 verification
 msucat download 20ff3247-bd92-4683-9094-c298e9c6125f
 
 # Custom destination and filename filter
 msucat download 20ff3247-bd92-4683-9094-c298e9c6125f --output /tmp/updates --filter "x64"
+
+# Skip hash verification
+msucat download 20ff3247-bd92-4683-9094-c298e9c6125f --no-verify
 ```
+
+Downloads stream into a temporary `.part` file (`<filename>.part`). Upon completion, the file's SHA-256 is validated against Microsoft's official manifest. If valid, the file is atomically renamed to its destination. If corrupted or interrupted, the partial file is safely cleaned up. Existing files with matching hashes are skipped automatically.
 
 ---
 
@@ -106,7 +116,7 @@ msucat download 20ff3247-bd92-4683-9094-c298e9c6125f --output /tmp/updates --fil
 Add `msucat` to your `Cargo.toml`:
 ```toml
 [dependencies]
-msucat = "0.1.0"
+msucat = "0.1.1"
 ```
 
 ### Example: Search and Download
@@ -145,6 +155,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+---
+
+## Disclaimer
+
+`msucat` is an independent, open-source tool and scraper for Microsoft's legacy Update Catalog WebForms portal. It is not affiliated with, sponsored by, or endorsed by Microsoft Corporation. Because the Catalog web interface is subject to change at any time without notice, this software is provided "as is", without warranty or SLA of any kind.
 
 ---
 

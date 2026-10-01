@@ -272,13 +272,13 @@ pub fn parse_update_details(html: &str, update_id: &str) -> Result<UpdateDetails
 
 /// Parse direct file download URLs and hashes from DownloadDialog.aspx HTML.
 pub fn parse_download_dialog(html: &str) -> Result<Vec<DownloadFile>> {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     #[derive(Default)]
     struct RawUpdate {
         update_id: String,
         title: String,
-        files: HashMap<usize, RawFile>,
+        files: BTreeMap<usize, RawFile>,
     }
 
     #[derive(Default)]
@@ -289,7 +289,7 @@ pub fn parse_download_dialog(html: &str) -> Result<Vec<DownloadFile>> {
         file_name: String,
     }
 
-    let mut updates: HashMap<usize, RawUpdate> = HashMap::new();
+    let mut updates: BTreeMap<usize, RawUpdate> = BTreeMap::new();
 
     // Scan for update-level metadata
     for cap in RE_DOWNLOAD_INFO.captures_iter(html) {

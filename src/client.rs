@@ -34,7 +34,7 @@ impl MsuClient {
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(30))
             .build()
             .expect("failed to build reqwest client");
 
@@ -58,6 +58,7 @@ impl MsuClient {
     ) -> Result<Vec<UpdateSummary>> {
         let mut all_results = Vec::new();
         let mut current_page = 0;
+        let mut seen_ids = std::collections::HashSet::new();
 
         loop {
             let (results, has_next) = self.search_page(query, current_page).await?;
@@ -65,9 +66,20 @@ impl MsuClient {
                 break;
             }
 
-            all_results.extend(results);
-            current_page += 1;
+            let mut new_items_found = false;
+            for item in results {
+                if seen_ids.insert(item.id.clone()) {
+                    all_results.push(item);
+                    new_items_found = true;
+                }
+            }
 
+            // If a subsequent page returned only duplicates or nothing new, stop
+            if !new_items_found {
+                break;
+            }
+
+            current_page += 1;
             if !has_next || current_page >= max_pages {
                 break;
             }
@@ -76,7 +88,7 @@ impl MsuClient {
         Ok(all_results)
     }
 
-    /// Fetch a single page of search results.
+    /// Fetch a single page of search results (0-indexed page index).
     pub async fn search_page(
         &self,
         query: &str,
@@ -86,7 +98,8 @@ impl MsuClient {
         let resp = self
             .client
             .get(&url)
-            .query(&[("q", query), ("page", &page_index.to_string())])
+            .query(&[("q", query), ("p", &page_index.to_string())])
+            .timeout(Duration::from_secs(30))
             .send()
             .await?;
 
@@ -101,6 +114,7 @@ impl MsuClient {
             .client
             .get(&url)
             .query(&[("updateid", update_id)])
+            .timeout(Duration::from_secs(30))
             .send()
             .await?;
 
@@ -147,6 +161,7 @@ impl MsuClient {
             .header(REFERER, &referer_url)
             .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
             .form(&[("updateIDs", &json_payload)])
+            .timeout(Duration::from_secs(30))
             .send()
             .await?;
 
@@ -207,7 +222,11 @@ impl MsuClient {
         }
 
         let total_size = resp.content_length();
-        let part_path = dest_path.with_extension("part");
+        let file_name = dest_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("download");
+        let part_path = dest_path.with_file_name(format!("{}.part", file_name));
 
         let mut file = File::create(&part_path).await?;
         let mut stream = resp.bytes_stream();
@@ -215,8 +234,17 @@ impl MsuClient {
         let mut hasher = Sha256::new();
 
         while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result?;
-            file.write_all(&chunk).await?;
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = fs::remove_file(&part_path).await;
+                    return Err(MsuCatError::Network(e));
+                }
+            };
+            if let Err(e) = file.write_all(&chunk).await {
+                let _ = fs::remove_file(&part_path).await;
+                return Err(MsuCatError::Io(e));
+            }
             hasher.update(&chunk);
             downloaded += chunk.len() as u64;
             on_progress(downloaded, total_size);

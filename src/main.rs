@@ -23,19 +23,19 @@ enum Commands {
         /// Search query (KB number, product name, or keyword)
         query: String,
 
-        /// Filter by architecture (e.g. x64, arm64, x86)
+        /// Client-side post-filter by architecture (e.g. x64, arm64, x86)
         #[arg(short, long)]
         arch: Option<String>,
 
-        /// Filter by product name (e.g. "Windows 11", "Server 2022")
+        /// Client-side post-filter by product name (e.g. "Windows 11", "Server 2022")
         #[arg(short, long)]
         product: Option<String>,
 
-        /// Filter by classification (e.g. "Security Updates", "Critical Updates")
+        /// Client-side post-filter by classification (e.g. "Security Updates", "Critical Updates")
         #[arg(short, long)]
         classification: Option<String>,
 
-        /// Number of catalog pages to fetch (default: 1, 25 items per page)
+        /// Number of catalog pages to fetch (25 items per page)
         #[arg(short = 'n', long, default_value = "1")]
         pages: usize,
 
@@ -79,8 +79,8 @@ enum Commands {
         #[arg(short, long)]
         filter: Option<String>,
 
-        /// Verify file against catalog SHA-256 hash
-        #[arg(long, default_value = "true")]
+        /// Disable on-the-fly SHA-256 checksum verification
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
     },
 }
@@ -284,11 +284,18 @@ async fn run(cli: Cli, client: &MsuClient) -> Result<()> {
                     "✓".green().bold(),
                     downloaded_path.display()
                 );
-                if let Some(ref hash) = file.sha256_hex {
+                if verify {
+                    if let Some(ref hash) = file.sha256_hex {
+                        println!(
+                            "   {} SHA-256 verified: {}",
+                            "✓".green().bold(),
+                            hash.dimmed()
+                        );
+                    }
+                } else {
                     println!(
-                        "   {} SHA-256 verified: {}",
-                        "✓".green().bold(),
-                        hash.dimmed()
+                        "   {} Checksum verification skipped (--no-verify)",
+                        "!".yellow().bold()
                     );
                 }
                 println!();
