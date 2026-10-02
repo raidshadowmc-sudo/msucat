@@ -7,6 +7,10 @@ Fast, cross-platform CLI and Rust library for searching, inspecting, and downloa
 
 No Windows COM APIs, no Windows Update Agent, and no browser required. Works natively on **Linux**, **macOS**, and **Windows**.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="msucat in action" width="800">
+</p>
+
 ---
 
 ## Why msucat?
